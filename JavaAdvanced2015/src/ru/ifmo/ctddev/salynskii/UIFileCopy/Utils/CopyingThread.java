@@ -19,13 +19,11 @@ public class CopyingThread implements Runnable {
     private final Path destination;
     private final ConcurrentMap<String, CopyValues> correlationsResolutions;
     private final ConcurrentLinkedQueue<String> messages;
-    private final Path source;
     AtomicLong counter;
 
-    public CopyingThread(Path source, Map<String, Map<String, Path>> pathsMap, Path destination,
+    public CopyingThread(Map<String, Map<String, Path>> pathsMap, Path destination,
                          ConcurrentMap<String, CopyValues> correlationsResolutions, AtomicLong counter,
                          ConcurrentLinkedQueue<String> messages) {
-        this.source = source;
         this.pathsMap = pathsMap;
         this.destination = destination;
         this.correlationsResolutions = correlationsResolutions;
@@ -41,8 +39,7 @@ public class CopyingThread implements Runnable {
             v.forEach((innerKey, innerValue) -> {
                 Path tmpPath = Paths.get(destination.toAbsolutePath() + k + File.separator + innerKey);
                 String completeKey = k + File.separator + innerKey;
-                if (correlationsResolutions.containsKey(completeKey)) {
-                    switch (correlationsResolutions.get(completeKey)) {
+                switch (correlationsResolutions.getOrDefault(completeKey, CopyValues.REPLACE_MODE)) {
                         case IGNORE_MODE:
                             break;
                         case COPYING_WITH_MARKER:
@@ -50,25 +47,49 @@ public class CopyingThread implements Runnable {
                             tmpPath = getNewName(destination, k, innerKey);
                             System.err.println(tmpPath);
                         case REPLACE_MODE:
-                            copyFile(innerValue.toAbsolutePath(), tmpPath);
-//                            try {
-//                                Files.copy(innerValue.toAbsolutePath(), tmpPath, StandardCopyOption.REPLACE_EXISTING);
-//                            } catch (IOException e) {
-//                                e.printStackTrace();
-//                            }
-                    }
-                } else {
-                    copyFile(innerValue.toAbsolutePath(), tmpPath);
-//                    try {
-//                        Files.copy(innerValue.toAbsolutePath(), tmpPath, StandardCopyOption.REPLACE_EXISTING);
-//                    } catch (IOException e) {
-//                        e.printStackTrace();
-//                    }
+                            try {
+                                Files.copy(innerValue.toAbsolutePath(), tmpPath, StandardCopyOption.REPLACE_EXISTING);
+                            } catch (IOException e) {
+                                e.printStackTrace();
+                            }
                 }
+                updateStats(innerValue);
+//                if (correlationsResolutions.containsKey(completeKey)) {
+//                    switch (correlationsResolutions.get(completeKey)) {
+//                        case IGNORE_MODE:
+//                            break;
+//                        case COPYING_WITH_MARKER:
+//                            System.err.println("Here we are!");
+//                            tmpPath = getNewName(destination, k, innerKey);
+//                            System.err.println(tmpPath);
+//                        case REPLACE_MODE:
+//                            copyFile(innerValue.toAbsolutePath(), tmpPath);
+////                            try {
+////                                Files.copy(innerValue.toAbsolutePath(), tmpPath, StandardCopyOption.REPLACE_EXISTING);
+////                            } catch (IOException e) {
+////                                e.printStackTrace();
+////                            }
+//                    }
+//                } else {
+//                    copyFile(innerValue.toAbsolutePath(), tmpPath);
+////                    try {
+////                        Files.copy(innerValue.toAbsolutePath(), tmpPath, StandardCopyOption.REPLACE_EXISTING);
+////                    } catch (IOException e) {
+////                        e.printStackTrace();
+////                    }
+//                }
             });
         });
     }
 
+    private void updateStats(Path path) {
+        messages.add("File " + path.toAbsolutePath() + " successfully copied.");
+        try {
+            counter.getAndAdd(Files.size(path));
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
 
 
     private Path getNewName(Path destination, String k, String innerKey) {

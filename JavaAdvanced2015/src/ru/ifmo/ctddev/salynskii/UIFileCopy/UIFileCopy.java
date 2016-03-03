@@ -53,7 +53,7 @@ public class UIFileCopy {
         ConcurrentLinkedQueue<String> messages = new ConcurrentLinkedQueue<>();
 
         AtomicLong copied = new AtomicLong(0);
-        copyFiles(path1, from, path2, correlationResolutions, copied, messages);
+        copyFiles(from, path2, correlationResolutions, copied, messages);
 
 
         // TODO comment this debug messages
@@ -61,7 +61,7 @@ public class UIFileCopy {
         //
     }
 
-    private static void copyFiles(Path sourceDir, ConcurrentMap<String, Map<String, Path>> from, Path destination,
+    private static void copyFiles(ConcurrentMap<String, Map<String, Path>> from, Path destination,
                                   ConcurrentMap<String, CopyValues> correlationsResolutions, AtomicLong counter,
                                   ConcurrentLinkedQueue<String> messages) {
         Map<String, Map<String, Path>> pathsMap = new HashMap<>();
@@ -70,17 +70,17 @@ public class UIFileCopy {
             if (v.size() > MIN_FILES_COUNT) {
                 Map<String, Map<String, Path>> tmp = new HashMap<>();
                 tmp.put(k, v);
-                threads.add(copyingThread(sourceDir, tmp, destination, correlationsResolutions, counter, messages));
+                threads.add(copyingThread(tmp, destination, correlationsResolutions, counter, messages));
             } else {
                 pathsMap.put(k, v);
                 if (pathsMap.size() > MIN_FILES_COUNT) {
-                    threads.add(copyingThread(sourceDir, new HashMap<>(pathsMap), destination, correlationsResolutions, counter, messages));
+                    threads.add(copyingThread(new HashMap<>(pathsMap), destination, correlationsResolutions, counter, messages));
                     pathsMap.clear();
                 }
             }
         });
         if (!pathsMap.isEmpty()) {
-            threads.add(copyingThread(sourceDir, pathsMap, destination, correlationsResolutions, counter, messages));
+            threads.add(copyingThread(pathsMap, destination, correlationsResolutions, counter, messages));
         }
 
         threads.forEach(t -> {
@@ -92,10 +92,10 @@ public class UIFileCopy {
         });
     }
 
-    private static Thread copyingThread(Path sourceDir, Map<String, Map<String, Path>> pathsMap, Path destination,
+    private static Thread copyingThread(Map<String, Map<String, Path>> pathsMap, Path destination,
                                         ConcurrentMap<String, CopyValues> correlationsResolutions, AtomicLong counter,
                                         ConcurrentLinkedQueue<String> messages) {
-        Thread t = new Thread(new CopyingThread(sourceDir, pathsMap, destination, correlationsResolutions, counter, messages));
+        Thread t = new Thread(new CopyingThread(pathsMap, destination, correlationsResolutions, counter, messages));
         t.start();
         return t;
     }
