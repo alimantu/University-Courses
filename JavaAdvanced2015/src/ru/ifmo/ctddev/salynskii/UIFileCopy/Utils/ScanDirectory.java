@@ -17,15 +17,15 @@ public class ScanDirectory implements Runnable{
     private final Path path;
     private ConcurrentMap<String, Map<String, Path>> pathMap;
     private final String prefix;
-    private AtomicLong counter;
+    private AtomicLong accumulator;
     private final boolean accumulatorUsage;
 
-    public ScanDirectory(Path path, String prefix, AtomicLong counter,
+    public ScanDirectory(Path path, String prefix, AtomicLong accumulator,
                          ConcurrentMap<String, Map<String, Path>> pathMap) {
         this.path = path;
         this.pathMap = pathMap;
         this.prefix = prefix;
-        this.counter = counter;
+        this.accumulator = accumulator;
         this.accumulatorUsage = true;
     }
 
@@ -37,19 +37,19 @@ public class ScanDirectory implements Runnable{
         this.accumulatorUsage = false;
     }
 
-    private ScanDirectory(Path path, String prefix, AtomicLong counter, boolean accumulatorUsage,
-                      ConcurrentMap<String, Map<String, Path>> pathMap) {
+    private ScanDirectory(Path path, String prefix, AtomicLong accumulator, boolean accumulatorUsage,
+                          ConcurrentMap<String, Map<String, Path>> pathMap) {
         this.path = path;
         this.pathMap = pathMap;
         this.prefix = prefix;
-        this.counter = counter;
+        this.accumulator = accumulator;
         this.accumulatorUsage = accumulatorUsage;
     }
 
     public void scan() {
         if (Files.isDirectory(path)) {
             pathMap.put(prefix, new HashMap<>());
-            scanDiectory();
+            scanDirectory();
         } else {
             throw new IllegalArgumentException("Expected directory name, but found file name " + path.toAbsolutePath());
         }
@@ -60,7 +60,7 @@ public class ScanDirectory implements Runnable{
             pathMap.get(prefix).put(key, value);
             if (accumulatorUsage) {
                 try {
-                    counter.getAndAdd(Files.size(value));
+                    accumulator.getAndAdd(Files.size(value));
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
@@ -70,17 +70,27 @@ public class ScanDirectory implements Runnable{
         }
     }
 
-    private void scanDiectory() {
+    private void scanDirectory() {
         ArrayList<Thread> threads = new ArrayList<>();
-
         try {
             Files.walk(path, 1).forEach(innerPath -> {
+                if (Thread.interrupted()) {
+                    threads.forEach(Thread::interrupt);
+                    throw new BreakException();
+                }
                 if (!innerPath.equals(path)) {
                     putPath(innerPath.getName(innerPath.getNameCount() - 1).toString(), innerPath);
+                    if (accumulatorUsage) {
+                        try {
+                            accumulator.getAndAdd(Files.size(innerPath));
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        }
+                    }
                     if (Files.isDirectory(innerPath)) {
                         Thread t = new Thread(new ScanDirectory(innerPath,
                                 prefix + File.separator + innerPath.getName(innerPath.getNameCount() - 1).toString(),
-                                counter, accumulatorUsage, pathMap));
+                                accumulator, accumulatorUsage, pathMap));
                         threads.add(t);
                         t.start();
                     }
@@ -88,7 +98,7 @@ public class ScanDirectory implements Runnable{
             });
         } catch (IOException e) {
             e.printStackTrace();
-        }
+        } catch (BreakException ignore) {}
 
         for (Thread t : threads) {
             try {
@@ -101,6 +111,6 @@ public class ScanDirectory implements Runnable{
 
     @Override
     public void run() {
-        scanDiectory();
+        scanDirectory();
     }
 }
