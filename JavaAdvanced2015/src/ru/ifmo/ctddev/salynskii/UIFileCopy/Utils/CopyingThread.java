@@ -1,5 +1,7 @@
 package ru.ifmo.ctddev.salynskii.UIFileCopy.Utils;
 
+import javafx.util.Pair;
+
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -18,17 +20,42 @@ public class CopyingThread implements Runnable {
     private final Map<String, Map<String, Path>> pathsMap;
     private final Path destination;
     private final ConcurrentMap<String, CopyValues> correlationsResolutions;
-    private final ConcurrentLinkedQueue<String> messages;
-    private AtomicLong counter;
+    private ConcurrentLinkedQueue<String> messagesLog;
+    private boolean messagesLogSet = false;
+    private AtomicLong accumulator;
+    private boolean accumulatorSet = false;
+
 
     public CopyingThread(Map<String, Map<String, Path>> pathsMap, Path destination,
-                         ConcurrentMap<String, CopyValues> correlationsResolutions, AtomicLong counter,
-                         ConcurrentLinkedQueue<String> messages) {
+                         ConcurrentMap<String, CopyValues> correlationsResolutions) {
+        checkNull(new Pair<>("Map<String, Map<String, Path>> pathsMap", pathsMap),
+                new Pair<>("Path destination", destination),
+                new Pair<>("ConcurrentMap<String, CopyValues> correlationsResolutions", correlationsResolutions)
+                );
         this.pathsMap = pathsMap;
         this.destination = destination;
         this.correlationsResolutions = correlationsResolutions;
-        this.messages = messages;
-        this.counter = counter;
+    }
+
+    public void setAccumulator(AtomicLong accumulator) {
+        checkNull(new Pair<>("AtomicLong accumulator", accumulator));
+        this.accumulatorSet = true;
+        this.accumulator = accumulator;
+    }
+
+    public void setMessagesLog(ConcurrentLinkedQueue<String> messagesLog) {
+        checkNull(new Pair<>("ConcurrentLinkedQueue<String> messagesLog", messagesLog));
+        this.messagesLogSet = true;
+        this.messagesLog = messagesLog;
+    }
+
+    @SafeVarargs
+    private final void checkNull(Pair<String, Object>... pairs) {
+        for (Pair<String, Object> p : pairs) {
+            if (p.getValue() == null) {
+                throw new IllegalArgumentException("Expected " + p.getKey() + ", but found null");
+            }
+        }
     }
 
     @Override
@@ -51,9 +78,7 @@ public class CopyingThread implements Runnable {
                         case COPYING_WITH_MARKER:
                             tmpPath = getNewName(destination, k, innerKey);
                         case REPLACE_MODE:
-                            if (!isSystemFile(tmpPath)) {
-                                copyFile(innerValue.toAbsolutePath(), tmpPath);
-                            }
+                            copyFile(innerValue.toAbsolutePath(), tmpPath);
                     }
                 });
             });
@@ -63,16 +88,20 @@ public class CopyingThread implements Runnable {
     private void copyFile(Path path, Path tmpPath) {
         try{
             Files.copy(path, tmpPath, StandardCopyOption.REPLACE_EXISTING);
-            counter.getAndAdd(Files.size(path));
-            messages.add("File " + path.toString() + " successfully copied to " + tmpPath);
+            if (accumulatorSet) {
+                    accumulator.getAndAdd(Files.size(path));
+            }
+            addLogMessage(path.toString() + "\n    copied to " + tmpPath);
         } catch (IOException e) {
-            messages.add("Some troubles happened during copying of the " + path.toString() + " file");
+            addLogMessage("Troubles with copying " + path.toString() + " file!");
             e.printStackTrace();
         }
     }
 
-    private boolean isSystemFile(Path tmpPath) {
-        return tmpPath.toString().endsWith(".DS_Store");
+    private void addLogMessage(String message) {
+        if (messagesLogSet) {
+            messagesLog.add(message);
+        }
     }
 
     private Path getNewName(Path destination, String k, String innerKey) {

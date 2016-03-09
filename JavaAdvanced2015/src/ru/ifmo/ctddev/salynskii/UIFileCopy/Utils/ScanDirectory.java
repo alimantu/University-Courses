@@ -78,15 +78,8 @@ public class ScanDirectory implements Runnable{
                     threads.forEach(Thread::interrupt);
                     throw new BreakException();
                 }
-                if (!innerPath.equals(path)) {
+                if (!innerPath.equals(path) && !isSystemFile(innerPath)) {
                     putPath(innerPath.getName(innerPath.getNameCount() - 1).toString(), innerPath);
-                    if (accumulatorUsage) {
-                        try {
-                            accumulator.getAndAdd(Files.size(innerPath));
-                        } catch (IOException e) {
-                            e.printStackTrace();
-                        }
-                    }
                     if (Files.isDirectory(innerPath)) {
                         Thread t = new Thread(new ScanDirectory(innerPath,
                                 prefix + File.separator + innerPath.getName(innerPath.getNameCount() - 1).toString(),
@@ -107,6 +100,10 @@ public class ScanDirectory implements Runnable{
                 e.printStackTrace();
             }
         }
+    }
+
+    private boolean isSystemFile(Path tmpPath) {
+        return tmpPath.toString().endsWith(".DS_Store");
     }
 
     @Override

@@ -74,17 +74,20 @@ public class FileCopy implements Runnable {
 
     @Override
     public void run() {
-        walkDirs();
-        Map<String, Pair<Path, Path>> correlationsMap = checkForCorrelations();
-        ConcurrentMap<String, CopyValues> correlationResolutions = solveCorrelations(correlationsMap);
-        copyFiles(correlationResolutions);
+        try {
+            walkDirs();
+            Map<String, Pair<Path, Path>> correlationsMap = checkForCorrelations();
+            ConcurrentMap<String, CopyValues> correlationResolutions = solveCorrelations(correlationsMap);
+            copyFiles(correlationResolutions);
+        } catch (BreakException ignore) {}
+        sendMessage(new Message(MessageType.COPY_COMPLETED, null));
     }
 
     private ConcurrentMap<String, CopyValues> solveCorrelations(Map<String, Pair<Path, Path>> correlationsMap) {
         ConcurrentMap<String, CopyValues> result;
         if (!correlationsMap.isEmpty()) {
             if (messagesChanelSet) {
-                messagesChanel.getKey().add(new Message(MessageType.CORRELATIONS_MAP, correlationsMap));
+                sendMessage(new Message(MessageType.CORRELATIONS_MAP, correlationsMap));
                 result = (ConcurrentMap<String, CopyValues>) getMessage(MessageType.CORRELATION_RESOLUTIONS);
             } else {
                 result = new ConcurrentHashMap<>();
@@ -97,7 +100,9 @@ public class FileCopy implements Runnable {
         assert result != null;
         result.forEach((k, v) -> {
             try {
-                totalCount.getAndAdd(- Files.size(Paths.get(path1.toAbsolutePath() + k)));
+                if (v == CopyValues.IGNORE_MODE) {
+                    totalCount.getAndAdd(-Files.size(Paths.get(path1.toAbsolutePath() + k)));
+                }
             } catch (IOException e) {
                 e.printStackTrace();
             }
@@ -106,7 +111,8 @@ public class FileCopy implements Runnable {
     }
 
     private Object getMessage(MessageType messageType) {
-        while (!Thread.interrupted()) {
+        while (!isInterrupted) {
+            isInterrupted |= Thread.interrupted();
             // I don't like it at all, but in current situation another solutions will cost us much more time
             // and we will not use the received functionality in anyway.
             while (!messagesChanel.getValue().isEmpty()) {
@@ -117,7 +123,6 @@ public class FileCopy implements Runnable {
             }
             Thread.yield();
         }
-        isInterrupted = true;
         return null;
     }
 
@@ -127,6 +132,7 @@ public class FileCopy implements Runnable {
         final int[] cnt = {0};
         from.forEach((k, v) -> {
             if (v.size() > MIN_FILES_COUNT) {
+                // TODO here we need some additional thread generation for large folders
                 Map<String, Map<String, Path>> tmp = new HashMap<>();
                 tmp.put(k, v);
                 threads.add(copyingThread(tmp, correlationResolutions));
@@ -155,30 +161,53 @@ public class FileCopy implements Runnable {
             }
             Thread.yield();
         }
+        sendMessage(new Message(MessageType.SCANNING_COMPLETED, null));
+        checkInterrupted();
+    }
+
+    private void sendMessage(Message message) {
+        if (messagesChanelSet) {
+            messagesChanel.getValue().add(message);
+        }
+    }
+
+    private void checkInterrupted() {
+        if (isInterrupted) {
+            throw new BreakException();
+        }
     }
 
     private Thread copyingThread(Map<String, Map<String, Path>> pathsMap, ConcurrentMap<String, CopyValues> correlationResolutions) {
-        Thread t = new Thread(new CopyingThread(pathsMap, path2, correlationResolutions, currentCount, messagesLog));
+        CopyingThread ct = new CopyingThread(pathsMap, path2, correlationResolutions);
+        ct.setAccumulator(currentCount);
+        ct.setMessagesLog(messagesLog);
+        Thread t = new Thread(ct);
         t.start();
         return t;
     }
 
     private void walkDirs() {
         Thread t1 = new Thread(() -> {
-            (new ScanDirectory(path1, "", totalCount, from)).scan();
+            if (countingMode) {
+                (new ScanDirectory(path1, "", totalCount, from)).scan();
+            } else {
+                (new ScanDirectory(path1, "", from)).scan();
+            }
         });
         t1.start();
         Thread t2 = new Thread(() -> {
             (new ScanDirectory(path2, "", to)).scan();
         });
         t2.start();
-        try {
-            t1.join();
-            t2.join();
-        } catch (InterruptedException e) {
-            t1.interrupt();
-            t2.interrupt();
-            System.err.println("Unexpected thread interruption!");
+        boolean alive = true;
+        while (alive) {
+            isInterrupted |= Thread.interrupted();
+            if (isInterrupted) {
+                t1.interrupt();
+                t2.interrupt();
+            }
+            alive = t1.isAlive() || t2.isAlive();
+            Thread.yield();
         }
     }
 
@@ -202,6 +231,7 @@ public class FileCopy implements Runnable {
                 });
             }
         });
+        checkInterrupted();
         return result;
     }
 }

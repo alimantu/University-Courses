@@ -3,7 +3,9 @@ package ru.ifmo.ctddev.salynskii.UIFileCopy;
 import javafx.util.Pair;
 import ru.ifmo.ctddev.salynskii.UIFileCopy.Utils.FileCopy;
 import ru.ifmo.ctddev.salynskii.UIFileCopy.Utils.Message;
+import ru.ifmo.ctddev.salynskii.UIFileCopy.Utils.SwingRunnable;
 
+import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -29,30 +31,45 @@ public class UIFileCopy {
         if (Files.isRegularFile(path2)) {
             throw new IllegalArgumentException("Expected directory name as second argument, but found file name - " + args[1]);
         }
-
-        FileCopy fc = new FileCopy(path1, path2);
         AtomicLong totalBytes = new AtomicLong(0);
         AtomicLong copiedBytes = new AtomicLong(0);
+        ConcurrentLinkedQueue<String> messagesLog = new ConcurrentLinkedQueue<>();
+//        PrintStream messagesLog = new PrintStream();
+        Pair<ConcurrentLinkedQueue<Message>, ConcurrentLinkedQueue<Message>> uIMessagesChanel =
+                new Pair<>(new ConcurrentLinkedQueue<>(), new ConcurrentLinkedQueue<>());
+        SwingRunnable sr = new SwingRunnable(copiedBytes, totalBytes, uIMessagesChanel);
+        sr.setMessagesLog(messagesLog);
+        Thread srThread = new Thread(sr);
+        srThread.start();
+
+        FileCopy fc = new FileCopy(path1, path2);
         fc.setCounters(totalBytes, copiedBytes);
-        ConcurrentLinkedQueue<String> messages = new ConcurrentLinkedQueue<>();
-        fc.setMessagesLog(messages);
+        fc.setMessagesLog(messagesLog);
         Pair<ConcurrentLinkedQueue<Message>, ConcurrentLinkedQueue<Message>> messagesChanel =
                 new Pair<>(new ConcurrentLinkedQueue<>(), new ConcurrentLinkedQueue<>());
 //        fc.setMessagesChanel(messagesChanel);
         Thread fcThread = new Thread(fc);
         fcThread.start();
-        boolean alive = true;
-        while (alive) {
-            while (!messages.isEmpty()) {
-                System.out.println(messages.poll());
-                System.err.println("Progress: " + (copiedBytes.get() * 100.0 / totalBytes.get()));
-            }
-            alive = fcThread.isAlive();
-            if (Thread.interrupted()) {
-                alive = false;
-                fcThread.interrupt();
-            }
+
+        try {
+            srThread.join();
+            fcThread.join();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
         }
+
+//        boolean alive = true;
+//        while (alive) {
+//            while (!messagesLog.isEmpty()) {
+//                System.out.println(messagesLog.poll());
+//                System.err.println("Progress: " + (copiedBytes.get() * 100.0 / totalBytes.get()));
+//            }
+//            alive = fcThread.isAlive();
+//            if (Thread.interrupted()) {
+//                alive = false;
+//                fcThread.interrupt();
+//            }
+//        }
 //        try {
 //            fcThread.join();
 //        } catch (InterruptedException e) {
