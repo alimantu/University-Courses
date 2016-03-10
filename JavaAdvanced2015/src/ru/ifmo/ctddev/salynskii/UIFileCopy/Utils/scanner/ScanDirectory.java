@@ -1,4 +1,6 @@
-package ru.ifmo.ctddev.salynskii.UIFileCopy.Utils;
+package ru.ifmo.ctddev.salynskii.UIFileCopy.utils.scanner;
+
+import ru.ifmo.ctddev.salynskii.UIFileCopy.utils.exception.BreakException;
 
 import java.io.File;
 import java.io.IOException;

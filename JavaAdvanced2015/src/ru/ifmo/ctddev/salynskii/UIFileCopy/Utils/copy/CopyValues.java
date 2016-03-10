@@ -1,4 +1,4 @@
-package ru.ifmo.ctddev.salynskii.UIFileCopy.Utils;
+package ru.ifmo.ctddev.salynskii.UIFileCopy.utils.copy;
 
 /**
  * Created by Alimantu on 03/03/16.

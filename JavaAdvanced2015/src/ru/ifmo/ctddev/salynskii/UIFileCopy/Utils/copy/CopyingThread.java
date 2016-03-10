@@ -1,6 +1,7 @@
-package ru.ifmo.ctddev.salynskii.UIFileCopy.Utils;
+package ru.ifmo.ctddev.salynskii.UIFileCopy.utils.copy;
 
 import javafx.util.Pair;
+import ru.ifmo.ctddev.salynskii.UIFileCopy.utils.exception.BreakException;
 
 import java.io.File;
 import java.io.IOException;
@@ -8,9 +9,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -24,7 +28,8 @@ public class CopyingThread implements Runnable {
     private boolean messagesLogSet = false;
     private AtomicLong accumulator;
     private boolean accumulatorSet = false;
-
+    private ConcurrentSkipListSet<String> namePool;
+    private boolean namePoolSet = false;
 
     public CopyingThread(Map<String, Map<String, Path>> pathsMap, Path destination,
                          ConcurrentMap<String, CopyValues> correlationsResolutions) {
@@ -35,6 +40,21 @@ public class CopyingThread implements Runnable {
         this.pathsMap = pathsMap;
         this.destination = destination;
         this.correlationsResolutions = correlationsResolutions;
+    }
+
+    public CopyingThread(String key, List<Map.Entry<String, Path>> pathsList, Path destination,
+                         ConcurrentMap<String, CopyValues> correlationsResolutions) {
+        this(getPathsMap(key, pathsList), destination, correlationsResolutions);
+    }
+
+    private static Map<String, Map<String, Path>> getPathsMap(String key, List<Map.Entry<String, Path>> pathsList) {
+        checkNull(new Pair<>("String key", key),
+                new Pair<>("List<Map.Entry<String, Path>> pathsList", pathsList));
+        Map<String, Map<String, Path>> result = new HashMap<>();
+        Map<String, Path> innerMap = new HashMap<>();
+        pathsList.forEach(e -> innerMap.put(e.getKey(), e.getValue()));
+        result.put(key, innerMap);
+        return result;
     }
 
     public void setAccumulator(AtomicLong accumulator) {
@@ -49,8 +69,14 @@ public class CopyingThread implements Runnable {
         this.messagesLog = messagesLog;
     }
 
+    public void setNamePool(ConcurrentSkipListSet<String> namePool) {
+        checkNull(new Pair<>("ConcurrentSkipListSet<String> namePool", namePool));
+        this.namePool = namePool;
+        this.namePoolSet = true;
+    }
+
     @SafeVarargs
-    private final void checkNull(Pair<String, Object>... pairs) {
+    private static final void checkNull(Pair<String, Object>... pairs) {
         for (Pair<String, Object> p : pairs) {
             if (p.getValue() == null) {
                 throw new IllegalArgumentException("Expected " + p.getKey() + ", but found null");
@@ -121,7 +147,7 @@ public class CopyingThread implements Runnable {
             newPath = Paths.get(newPath.getParent().toAbsolutePath() +
                     File.separator + (name.equals("") ? "" : name + " ")
                     + "(" + count++ + ")" + extension);
-        } while (Files.exists(newPath));
+        } while (Files.exists(newPath) || (namePoolSet && !namePool.add(newPath.toString())));
         return newPath;
     }
 }

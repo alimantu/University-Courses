@@ -1,6 +1,12 @@
-package ru.ifmo.ctddev.salynskii.UIFileCopy.Utils;
+package ru.ifmo.ctddev.salynskii.UIFileCopy.utils;
 
 import javafx.util.Pair;
+import ru.ifmo.ctddev.salynskii.UIFileCopy.utils.copy.CopyValues;
+import ru.ifmo.ctddev.salynskii.UIFileCopy.utils.copy.CopyingThread;
+import ru.ifmo.ctddev.salynskii.UIFileCopy.utils.exception.BreakException;
+import ru.ifmo.ctddev.salynskii.UIFileCopy.utils.message.Message;
+import ru.ifmo.ctddev.salynskii.UIFileCopy.utils.message.MessageType;
+import ru.ifmo.ctddev.salynskii.UIFileCopy.utils.scanner.ScanDirectory;
 
 import java.io.File;
 import java.io.IOException;
@@ -9,17 +15,20 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Created by Alimantu on 04/03/16.
  */
 public class FileCopy implements Runnable {
-    private static final int MIN_FILES_COUNT = 30;
+    private static final int MIN_FILES_COUNT = 700;
+    private static final int MAX_FILES_COUNT = 1000;
     private static final CopyValues DEFAULT_MODE = CopyValues.COPYING_WITH_MARKER;
     private final Path path1;
     private final Path path2;
@@ -81,6 +90,7 @@ public class FileCopy implements Runnable {
             copyFiles(correlationResolutions);
         } catch (BreakException ignore) {}
         sendMessage(new Message(MessageType.COPY_COMPLETED, null));
+        System.err.println("Finished file copy");
     }
 
     private ConcurrentMap<String, CopyValues> solveCorrelations(Map<String, Pair<Path, Path>> correlationsMap) {
@@ -114,9 +124,9 @@ public class FileCopy implements Runnable {
         while (!isInterrupted) {
             isInterrupted |= Thread.interrupted();
             // I don't like it at all, but in current situation another solutions will cost us much more time
-            // and we will not use the received functionality in anyway.
-            while (!messagesChanel.getValue().isEmpty()) {
-                Message tmp = messagesChanel.getValue().poll();
+            // and we will not use the received functionality anyway.
+            while (!messagesChanel.getKey().isEmpty()) {
+                Message tmp = messagesChanel.getKey().poll();
                 if (tmp.getMessageType() == messageType) {
                     return tmp.getValue();
                 }
@@ -132,10 +142,13 @@ public class FileCopy implements Runnable {
         final int[] cnt = {0};
         from.forEach((k, v) -> {
             if (v.size() > MIN_FILES_COUNT) {
-                // TODO here we need some additional thread generation for large folders
-                Map<String, Map<String, Path>> tmp = new HashMap<>();
-                tmp.put(k, v);
-                threads.add(copyingThread(tmp, correlationResolutions));
+                if (v.size() > MAX_FILES_COUNT) {
+                    threads.addAll(multithreadCopy(k, v, correlationResolutions));
+                } else {
+                    Map<String, Map<String, Path>> tmp = new HashMap<>();
+                    tmp.put(k, v);
+                    threads.add(copyingThread(tmp, correlationResolutions));
+                }
             } else {
                 pathsMap.put(k, v);
                 cnt[0] += v.size();
@@ -161,8 +174,52 @@ public class FileCopy implements Runnable {
             }
             Thread.yield();
         }
-        sendMessage(new Message(MessageType.SCANNING_COMPLETED, null));
-        checkInterrupted();
+    }
+
+    private ArrayList<Thread> multithreadCopy(String key, Map<String, Path> pathsMap,
+                                              ConcurrentMap<String, CopyValues> correlationResolutions) {
+        ArrayList<Thread> result = new ArrayList<>();
+        ConcurrentSkipListSet<String> namePool = new ConcurrentSkipListSet<>();
+        int parts = 2;
+        while (pathsMap.size() / parts > MAX_FILES_COUNT) {
+            parts *= 2;
+        }
+        ArrayList<Map.Entry<String, Path>> entries = new ArrayList<>(pathsMap.entrySet());
+        int step = pathsMap.size() / parts;
+
+        for (int i = 0; i < parts; i++) {
+            result.add(copyingThread(key, entries.subList(i * step, (i + 1) * step), correlationResolutions, namePool));
+        }
+        return result;
+    }
+
+    private Thread copyingThread(String key, List<Map.Entry<String,Path>> entries,
+                                 ConcurrentMap<String, CopyValues> correlationResolutions,
+                                 ConcurrentSkipListSet<String> namePool) {
+        CopyingThread ct = new CopyingThread(key, entries, path2, correlationResolutions);
+        if (countingMode) {
+            ct.setAccumulator(currentCount);
+        }
+        if (loggingMode) {
+            ct.setMessagesLog(messagesLog);
+        }
+        ct.setNamePool(namePool);
+        Thread t = new Thread(ct);
+        t.start();
+        return t;
+    }
+
+    private Thread copyingThread(Map<String, Map<String, Path>> pathsMap, ConcurrentMap<String, CopyValues> correlationResolutions) {
+        CopyingThread ct = new CopyingThread(pathsMap, path2, correlationResolutions);
+        if (countingMode) {
+            ct.setAccumulator(currentCount);
+        }
+        if (loggingMode) {
+            ct.setMessagesLog(messagesLog);
+        }
+        Thread t = new Thread(ct);
+        t.start();
+        return t;
     }
 
     private void sendMessage(Message message) {
@@ -175,15 +232,6 @@ public class FileCopy implements Runnable {
         if (isInterrupted) {
             throw new BreakException();
         }
-    }
-
-    private Thread copyingThread(Map<String, Map<String, Path>> pathsMap, ConcurrentMap<String, CopyValues> correlationResolutions) {
-        CopyingThread ct = new CopyingThread(pathsMap, path2, correlationResolutions);
-        ct.setAccumulator(currentCount);
-        ct.setMessagesLog(messagesLog);
-        Thread t = new Thread(ct);
-        t.start();
-        return t;
     }
 
     private void walkDirs() {
@@ -209,6 +257,8 @@ public class FileCopy implements Runnable {
             alive = t1.isAlive() || t2.isAlive();
             Thread.yield();
         }
+        sendMessage(new Message(MessageType.SCANNING_COMPLETED, null));
+        checkInterrupted();
     }
 
     private Map<String, Pair<Path, Path>> checkForCorrelations() {
